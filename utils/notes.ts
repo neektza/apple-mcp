@@ -567,6 +567,59 @@ async function getNotesByDateRange(
 	}
 }
 
+type EditNoteResult = {
+	success: boolean;
+	message?: string;
+};
+
+/**
+ * Edit an existing note's content (and optionally rename it)
+ */
+async function editNote(title: string, newBody: string, newTitle?: string): Promise<EditNoteResult> {
+	try {
+		const accessResult = await requestNotesAccess();
+		if (!accessResult.hasAccess) {
+			return { success: false, message: accessResult.message };
+		}
+
+		const fs = require("fs");
+		const tmpFile = `/tmp/note-edit-${Date.now()}.txt`;
+		fs.writeFileSync(tmpFile, newBody, "utf8");
+
+		const escapedTitle = title.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+		const finalTitle = newTitle ?? title;
+		const escapedFinalTitle = finalTitle.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+		const script = `
+tell application "Notes"
+    set matchingNotes to notes whose name = "${escapedTitle}"
+    if (count of matchingNotes) > 0 then
+        set theNote to item 1 of matchingNotes
+        set noteContent to read POSIX file "${tmpFile}" as «class utf8»
+        set body of theNote to noteContent
+        set name of theNote to "${escapedFinalTitle}"
+        return "SUCCESS"
+    else
+        return "ERROR:Note not found"
+    end if
+end tell`;
+
+		const result = (await runAppleScript(script)) as string;
+
+		try { fs.unlinkSync(tmpFile); } catch (_) {}
+
+		if (result && result.startsWith("ERROR:")) {
+			return { success: false, message: result.slice(6) };
+		}
+		return { success: true };
+	} catch (error) {
+		return {
+			success: false,
+			message: `Failed to edit note: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+}
+
 /**
  * Get a single note by exact title, returning full untruncated content
  */
@@ -606,6 +659,7 @@ export default {
 	findNote,
 	getNoteByTitle,
 	createNote,
+	editNote,
 	getNotesFromFolder,
 	getRecentNotesFromFolder,
 	getNotesByDateRange,

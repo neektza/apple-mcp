@@ -22,8 +22,8 @@ const CONTACTS_TOOL: Tool = {
       properties: {
         operation: {
           type: "string",
-          description: "Operation to perform: 'search', 'list', 'create', or 'get'",
-          enum: ["search", "list", "create", "get"]
+          description: "Operation to perform: 'search', 'list', 'create', 'get', or 'edit'",
+          enum: ["search", "list", "create", "get", "edit"]
         },
         searchText: {
           type: "string",
@@ -31,7 +31,7 @@ const CONTACTS_TOOL: Tool = {
         },
         noteTitle: {
           type: "string",
-          description: "Exact title of the note to retrieve full untruncated content (required for get operation)"
+          description: "Exact title of the note to retrieve full untruncated content (required for get operation), or the note to edit (required for edit operation)"
         },
         title: {
           type: "string",
@@ -44,6 +44,14 @@ const CONTACTS_TOOL: Tool = {
         folderName: {
           type: "string",
           description: "Name of the folder to create the note in (optional for create operation, defaults to 'Claude')"
+        },
+        newBody: {
+          type: "string",
+          description: "New content to replace the note body with (required for edit operation)"
+        },
+        newTitle: {
+          type: "string",
+          description: "New title to rename the note to (optional for edit operation)"
         }
       },
       required: ["operation"]

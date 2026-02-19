@@ -370,6 +370,31 @@ function initServer() {
 								};
 							}
 
+							case "edit": {
+								if (!args.noteTitle || !args.newBody) {
+									throw new Error(
+										"noteTitle and newBody are required for edit operation",
+									);
+								}
+
+								const editResult = await notesModule.editNote(
+									args.noteTitle,
+									args.newBody,
+									args.newTitle,
+								);
+								return {
+									content: [
+										{
+											type: "text",
+											text: editResult.success
+												? `Note "${args.noteTitle}" updated successfully`
+												: `Failed to update note: ${editResult.message}`,
+										},
+									],
+									isError: !editResult.success,
+								};
+							}
+
 							default:
 								throw new Error(`Unknown operation: ${operation}`);
 						}
@@ -1357,12 +1382,14 @@ function isContactsArgs(args: unknown): args is { name?: string } {
 }
 
 function isNotesArgs(args: unknown): args is {
-	operation: "search" | "list" | "create" | "get";
+	operation: "search" | "list" | "create" | "get" | "edit";
 	searchText?: string;
 	noteTitle?: string;
 	title?: string;
 	body?: string;
 	folderName?: string;
+	newBody?: string;
+	newTitle?: string;
 } {
 	if (typeof args !== "object" || args === null) {
 		return false;
@@ -1373,7 +1400,7 @@ function isNotesArgs(args: unknown): args is {
 		return false;
 	}
 
-	if (!["search", "list", "create", "get"].includes(operation)) {
+	if (!["search", "list", "create", "get", "edit"].includes(operation)) {
 		return false;
 	}
 
@@ -1397,6 +1424,13 @@ function isNotesArgs(args: unknown): args is {
 			folderName !== undefined &&
 			(typeof folderName !== "string" || folderName === "")
 		) {
+			return false;
+		}
+	}
+
+	if (operation === "edit") {
+		const { noteTitle, newBody } = args as { noteTitle?: unknown; newBody?: unknown };
+		if (typeof noteTitle !== "string" || noteTitle === "" || typeof newBody !== "string") {
 			return false;
 		}
 	}

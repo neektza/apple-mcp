@@ -281,6 +281,50 @@ describe("Notes Integration Tests", () => {
     }, 20000);
   });
 
+  describe("editNote", () => {
+    it("should update note content", async () => {
+      const uniqueId = Date.now();
+      const title = `Edit Test ${uniqueId}`;
+      const originalBody = "Original content";
+      const updatedBody = `Updated content. Unique: EDIT_${uniqueId}`;
+
+      await notesModule.createNote(title, originalBody, TEST_DATA.NOTES.folderName);
+      await sleep(2000);
+
+      const result = await notesModule.editNote(title, updatedBody);
+      expect(result.success).toBe(true);
+      await sleep(2000);
+
+      const note = await notesModule.getNoteByTitle(title);
+      expect(note?.content).toContain(`EDIT_${uniqueId}`);
+      console.log("✅ editNote updated content successfully");
+    }, 30000);
+
+    it("should rename note when newTitle is provided", async () => {
+      const uniqueId = Date.now();
+      const title = `Rename Test ${uniqueId}`;
+      const newTitle = `Renamed Test ${uniqueId}`;
+
+      await notesModule.createNote(title, "body", TEST_DATA.NOTES.folderName);
+      await sleep(2000);
+
+      const result = await notesModule.editNote(title, "new body", newTitle);
+      expect(result.success).toBe(true);
+      await sleep(2000);
+
+      const note = await notesModule.getNoteByTitle(newTitle);
+      expect(note).not.toBeNull();
+      expect(note?.name).toBe(newTitle);
+      console.log("✅ editNote renamed note successfully");
+    }, 30000);
+
+    it("should return failure for non-existent note", async () => {
+      const result = await notesModule.editNote("NonExistentNote_99999", "content");
+      expect(result.success).toBe(false);
+      console.log("✅ editNote correctly rejected non-existent note");
+    }, 10000);
+  });
+
   describe("getRecentNotesFromFolder", () => {
     it("should retrieve recent notes from test folder", async () => {
       const result = await notesModule.getRecentNotesFromFolder(TEST_DATA.NOTES.folderName, 5);
