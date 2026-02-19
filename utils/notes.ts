@@ -26,6 +26,29 @@ type CreateNoteResult = {
 };
 
 /**
+ * Parse delimited note string from AppleScript into Note objects.
+ * AppleScript records don't serialize to JS objects through run-applescript,
+ * so we use custom delimiters instead.
+ */
+function parseDelimitedNotes(raw: string): Note[] {
+	if (!raw) return [];
+	const notes: Note[] = [];
+	const noteMatches = raw.match(/<<<NOTE_START>>>([\s\S]*?)<<<NOTE_SEP>>>([\s\S]*?)<<<NOTE_END>>>/g);
+	if (noteMatches) {
+		for (const match of noteMatches) {
+			const parts = match.match(/<<<NOTE_START>>>([\s\S]*?)<<<NOTE_SEP>>>([\s\S]*?)<<<NOTE_END>>>/);
+			if (parts) {
+				notes.push({
+					name: parts[1] || "Untitled Note",
+					content: parts[2] || "",
+				});
+			}
+		}
+	}
+	return notes;
+}
+
+/**
  * Check if Notes app is accessible
  */
 async function checkNotesAccess(): Promise<boolean> {
@@ -84,7 +107,7 @@ async function getAllNotes(): Promise<Note[]> {
 
 		const script = `
 tell application "Notes"
-    set notesList to {}
+    set outputText to ""
     set noteCount to 0
 
     -- Get all notes from all folders
@@ -104,28 +127,19 @@ tell application "Notes"
                 set noteContent to noteContent & "..."
             end if
 
-            set noteInfo to {name:noteName, content:noteContent}
-            set notesList to notesList & {noteInfo}
+            set outputText to outputText & "<<<NOTE_START>>>" & noteName & "<<<NOTE_SEP>>>" & noteContent & "<<<NOTE_END>>>"
             set noteCount to noteCount + 1
         on error
             -- Skip problematic notes
         end try
     end repeat
 
-    return notesList
+    return outputText
 end tell`;
 
-		const result = (await runAppleScript(script)) as any;
+		const result = (await runAppleScript(script)) as string;
 
-		// Convert AppleScript result to our format
-		const resultArray = Array.isArray(result) ? result : result ? [result] : [];
-
-		return resultArray.map((noteData: any) => ({
-			name: noteData.name || "Untitled Note",
-			content: noteData.content || "",
-			creationDate: undefined,
-			modificationDate: undefined,
-		}));
+		return parseDelimitedNotes(result);
 	} catch (error) {
 		console.error(
 			`Error getting all notes: ${error instanceof Error ? error.message : String(error)}`,
@@ -152,7 +166,7 @@ async function findNote(searchText: string): Promise<Note[]> {
 
 		const script = `
 tell application "Notes"
-    set matchedNotes to {}
+    set outputText to ""
     set noteCount to 0
     set searchTerm to "${searchTerm}"
 
@@ -175,8 +189,7 @@ tell application "Notes"
                     set noteContent to noteContent & "..."
                 end if
 
-                set noteInfo to {name:noteName, content:noteContent}
-                set matchedNotes to matchedNotes & {noteInfo}
+                set outputText to outputText & "<<<NOTE_START>>>" & noteName & "<<<NOTE_SEP>>>" & noteContent & "<<<NOTE_END>>>"
                 set noteCount to noteCount + 1
             end if
         on error
@@ -184,20 +197,12 @@ tell application "Notes"
         end try
     end repeat
 
-    return matchedNotes
+    return outputText
 end tell`;
 
-		const result = (await runAppleScript(script)) as any;
+		const result = (await runAppleScript(script)) as string;
 
-		// Convert AppleScript result to our format
-		const resultArray = Array.isArray(result) ? result : result ? [result] : [];
-
-		return resultArray.map((noteData: any) => ({
-			name: noteData.name || "Untitled Note",
-			content: noteData.content || "",
-			creationDate: undefined,
-			modificationDate: undefined,
-		}));
+		return parseDelimitedNotes(result);
 	} catch (error) {
 		console.error(
 			`Error finding notes: ${error instanceof Error ? error.message : String(error)}`,
