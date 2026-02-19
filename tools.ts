@@ -15,19 +15,23 @@ const CONTACTS_TOOL: Tool = {
   };
   
   const NOTES_TOOL: Tool = {
-    name: "notes", 
+    name: "notes",
     description: "Search, retrieve and create notes in Apple Notes app",
     inputSchema: {
       type: "object",
       properties: {
         operation: {
           type: "string",
-          description: "Operation to perform: 'search', 'list', or 'create'",
-          enum: ["search", "list", "create"]
+          description: "Operation to perform: 'search', 'list', 'create', or 'get'",
+          enum: ["search", "list", "create", "get"]
         },
         searchText: {
           type: "string",
-          description: "Text to search for in notes (required for search operation)"
+          description: "Text to search for in notes (required for search operation). Uses three-tier search: (1) fast server-side name match, (2) regex match against name and content if searchText contains regex metacharacters, (3) bigram similarity fallback for typo tolerance. Search is case-insensitive."
+        },
+        noteTitle: {
+          type: "string",
+          description: "Exact title of the note to retrieve full untruncated content (required for get operation)"
         },
         title: {
           type: "string",

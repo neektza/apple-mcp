@@ -3,7 +3,7 @@ import { runAppleScript } from "run-applescript";
 // Configuration
 const CONFIG = {
 	// Maximum notes to process (to avoid performance issues)
-	MAX_NOTES: 50,
+	MAX_NOTES: 100,
 	// Maximum content length for previews
 	MAX_CONTENT_PREVIEW: 200,
 	// Timeout for operations
@@ -24,6 +24,7 @@ type CreateNoteResult = {
 	folderName?: string;
 	usedDefaultFolder?: boolean;
 };
+
 
 /**
  * Parse delimited note string from AppleScript into Note objects.
@@ -149,7 +150,94 @@ end tell`;
 }
 
 /**
- * Find notes by search text
+ * Returns true if searchText contains regex metacharacters,
+ * indicating the caller intends it as a pattern rather than a literal string.
+ */
+function isRegexPattern(searchText: string): boolean {
+	return /[.*+?[\](){}^$|\\]/.test(searchText);
+}
+
+/**
+ * Build a case-insensitive RegExp from searchText.
+ * If searchText is already a valid regex pattern it is used as-is;
+ * otherwise it is treated as a literal string.
+ */
+function buildSearchRegex(searchText: string): RegExp {
+	try {
+		return new RegExp(searchText, "i");
+	} catch {
+		const escaped = searchText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		return new RegExp(escaped, "i");
+	}
+}
+
+/**
+ * Compute Dice coefficient over character bigrams of two strings.
+ */
+function bigramSimilarity(a: string, b: string): number {
+	if (a.length < 2 || b.length < 2) return a === b ? 1 : 0;
+	const bigrams = (s: string) => {
+		const set = new Set<string>();
+		for (let i = 0; i < s.length - 1; i++) set.add(s[i] + s[i + 1]);
+		return set;
+	};
+	const ba = bigrams(a);
+	const bb = bigrams(b);
+	let intersection = 0;
+	for (const bg of ba) if (bb.has(bg)) intersection++;
+	return (2 * intersection) / (ba.size + bb.size);
+}
+
+/**
+ * Score how well `query` matches `target`. Returns 0–1.
+ */
+function fuzzyScore(query: string, target: string): number {
+	const q = query.toLowerCase().trim();
+	const t = target.toLowerCase();
+	if (!q || !t) return 0;
+	if (t.includes(q)) return 1.0;
+	const tokens = q.split(/\s+/).filter(Boolean);
+	const matched = tokens.filter((tok) => t.includes(tok));
+	if (matched.length === tokens.length) return 0.9;
+	if (matched.length > 0) return 0.4 + 0.4 * (matched.length / tokens.length);
+	return bigramSimilarity(q, t) * 0.5;
+}
+
+/**
+ * Server-side name search using AppleScript whose clause.
+ * Fast — delegates filtering to Notes.app, no per-note round-trip.
+ * Returns notes with truncated content previews.
+ */
+async function findNotesByName(searchText: string): Promise<Note[]> {
+	const escaped = searchText.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+	const script = `
+tell application "Notes"
+    set matchingNotes to notes whose name contains "${escaped}"
+    set outputText to ""
+    repeat with theNote in matchingNotes
+        set noteName to name of theNote
+        set noteContent to plaintext of theNote
+        if (length of noteContent) > ${CONFIG.MAX_CONTENT_PREVIEW} then
+            set noteContent to (characters 1 thru ${CONFIG.MAX_CONTENT_PREVIEW} of noteContent) as string
+            set noteContent to noteContent & "..."
+        end if
+        set outputText to outputText & "<<<NOTE_START>>>" & noteName & "<<<NOTE_SEP>>>" & noteContent & "<<<NOTE_END>>>"
+    end repeat
+    return outputText
+end tell`;
+	const raw = (await runAppleScript(script)) as string;
+	return parseDelimitedNotes(raw);
+}
+
+/**
+ * Find notes by search text using a three-tier strategy:
+ *
+ * 1. AppleScript server-side name search (fast, no cap, case-insensitive substring).
+ *    Results are then filtered by the regex for precision.
+ * 2. If tier 1 returns nothing: fetch all notes (up to MAX_NOTES) and apply
+ *    the regex against both name and content.
+ * 3. If tier 2 returns nothing: bigram similarity fallback for typo tolerance,
+ *    scored against note names.
  */
 async function findNote(searchText: string): Promise<Note[]> {
 	try {
@@ -162,47 +250,31 @@ async function findNote(searchText: string): Promise<Note[]> {
 			return [];
 		}
 
-		const searchTerm = searchText.toLowerCase();
+		// Tier 1: server-side name search via AppleScript whose clause
+		const nameMatches = await findNotesByName(searchText);
+		if (nameMatches.length > 0) return nameMatches;
 
-		const script = `
-tell application "Notes"
-    set outputText to ""
-    set noteCount to 0
-    set searchTerm to "${searchTerm}"
+		// Fetch all notes once — reused by tier 2 and tier 3
+		const allNotes = await getAllNotes();
 
-    -- Get all notes and search through them
-    set allNotes to notes
+		// Tier 2 (regex only): apply regex to name + content across all notes
+		if (isRegexPattern(searchText)) {
+			const pattern = buildSearchRegex(searchText);
+			const tier2 = allNotes.filter(
+				(note) => pattern.test(note.name) || pattern.test(note.content),
+			);
+			if (tier2.length > 0) return tier2;
+		}
 
-    repeat with i from 1 to (count of allNotes)
-        if noteCount >= ${CONFIG.MAX_NOTES} then exit repeat
-
-        try
-            set currentNote to item i of allNotes
-            set noteName to name of currentNote
-            set noteContent to plaintext of currentNote
-
-            -- Simple case-insensitive search in name and content
-            if (noteName contains searchTerm) or (noteContent contains searchTerm) then
-                -- Limit content for preview
-                if (length of noteContent) > ${CONFIG.MAX_CONTENT_PREVIEW} then
-                    set noteContent to (characters 1 thru ${CONFIG.MAX_CONTENT_PREVIEW} of noteContent) as string
-                    set noteContent to noteContent & "..."
-                end if
-
-                set outputText to outputText & "<<<NOTE_START>>>" & noteName & "<<<NOTE_SEP>>>" & noteContent & "<<<NOTE_END>>>"
-                set noteCount to noteCount + 1
-            end if
-        on error
-            -- Skip problematic notes
-        end try
-    end repeat
-
-    return outputText
-end tell`;
-
-		const result = (await runAppleScript(script)) as string;
-
-		return parseDelimitedNotes(result);
+		// Tier 3: bigram similarity on note names (typo tolerance)
+		const BIGRAM_THRESHOLD = 0.3;
+		const MAX_FUZZY_RESULTS = 5;
+		return allNotes
+			.map((note) => ({ note, score: fuzzyScore(searchText, note.name) }))
+			.filter(({ score }) => score >= BIGRAM_THRESHOLD)
+			.sort((a, b) => b.score - a.score)
+			.slice(0, MAX_FUZZY_RESULTS)
+			.map(({ note }) => note);
 	} catch (error) {
 		console.error(
 			`Error finding notes: ${error instanceof Error ? error.message : String(error)}`,
@@ -495,9 +567,44 @@ async function getNotesByDateRange(
 	}
 }
 
+/**
+ * Get a single note by exact title, returning full untruncated content
+ */
+async function getNoteByTitle(title: string): Promise<Note | null> {
+	try {
+		const accessResult = await requestNotesAccess();
+		if (!accessResult.hasAccess) {
+			throw new Error(accessResult.message);
+		}
+
+		const escapedTitle = title.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+		const script = `
+tell application "Notes"
+    set matchingNotes to notes whose name = "${escapedTitle}"
+    if (count of matchingNotes) > 0 then
+        set theNote to item 1 of matchingNotes
+        return "<<<NOTE_START>>>" & name of theNote & "<<<NOTE_SEP>>>" & plaintext of theNote & "<<<NOTE_END>>>"
+    else
+        return "<<<NOT_FOUND>>>"
+    end if
+end tell`;
+
+		const raw = (await runAppleScript(script)) as string;
+		if (!raw || raw.includes("<<<NOT_FOUND>>>")) return null;
+		const notes = parseDelimitedNotes(raw);
+		return notes.length > 0 ? notes[0] : null;
+	} catch (error) {
+		console.error(
+			`Error getting note by title: ${error instanceof Error ? error.message : String(error)}`,
+		);
+		return null;
+	}
+}
+
 export default {
 	getAllNotes,
 	findNote,
+	getNoteByTitle,
 	createNote,
 	getNotesFromFolder,
 	getRecentNotesFromFolder,

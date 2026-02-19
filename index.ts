@@ -349,6 +349,27 @@ function initServer() {
 								};
 							}
 
+							case "get": {
+								if (!args.noteTitle) {
+									throw new Error(
+										"noteTitle is required for get operation",
+									);
+								}
+
+								const note = await notesModule.getNoteByTitle(args.noteTitle);
+								return {
+									content: [
+										{
+											type: "text",
+											text: note
+												? `# ${note.name}\n\n${note.content}`
+												: `Note "${args.noteTitle}" not found`,
+										},
+									],
+									isError: false,
+								};
+							}
+
 							default:
 								throw new Error(`Unknown operation: ${operation}`);
 						}
@@ -1336,8 +1357,9 @@ function isContactsArgs(args: unknown): args is { name?: string } {
 }
 
 function isNotesArgs(args: unknown): args is {
-	operation: "search" | "list" | "create";
+	operation: "search" | "list" | "create" | "get";
 	searchText?: string;
+	noteTitle?: string;
 	title?: string;
 	body?: string;
 	folderName?: string;
@@ -1351,7 +1373,7 @@ function isNotesArgs(args: unknown): args is {
 		return false;
 	}
 
-	if (!["search", "list", "create"].includes(operation)) {
+	if (!["search", "list", "create", "get"].includes(operation)) {
 		return false;
 	}
 

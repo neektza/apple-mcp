@@ -135,25 +135,25 @@ describe("Notes Integration Tests", () => {
         title: `${TEST_DATA.NOTES.searchTestNote.title} ${Date.now()}`,
         body: TEST_DATA.NOTES.searchTestNote.body
       };
-      
+
       await notesModule.createNote(
         searchTestNote.title,
         searchTestNote.body,
         TEST_DATA.NOTES.folderName
       );
-      
+
       await sleep(2000); // Wait for note to be indexed
-      
+
       // Now search for it
       const foundNotes = await notesModule.findNote("Search Test");
-      
+
       expect(Array.isArray(foundNotes)).toBe(true);
-      
+
       if (foundNotes.length > 0) {
-        const matchingNote = foundNotes.find(note => 
+        const matchingNote = foundNotes.find(note =>
           note.name.includes("Search Test")
         );
-        
+
         if (matchingNote) {
           console.log(`✅ Found note by title search: "${matchingNote.name}"`);
         } else {
@@ -166,14 +166,14 @@ describe("Notes Integration Tests", () => {
 
     it("should find notes by content search", async () => {
       const foundNotes = await notesModule.findNote("SEARCHABLE");
-      
+
       expect(Array.isArray(foundNotes)).toBe(true);
-      
+
       if (foundNotes.length > 0) {
-        const matchingNote = foundNotes.find(note => 
+        const matchingNote = foundNotes.find(note =>
           note.content.includes("SEARCHABLE")
         );
-        
+
         if (matchingNote) {
           console.log(`✅ Found note by content search: "${matchingNote.name}"`);
         }
@@ -184,12 +184,101 @@ describe("Notes Integration Tests", () => {
 
     it("should handle search with no results", async () => {
       const foundNotes = await notesModule.findNote("VeryUniqueSearchTerm12345");
-      
+
       expect(Array.isArray(foundNotes)).toBe(true);
       expect(foundNotes.length).toBe(0);
-      
+
       console.log("✅ Handled search with no results correctly");
     }, 10000);
+
+    it("should find notes using regex pattern (tier 2)", async () => {
+      // Create a note with content that can be matched by regex but not by simple contains
+      const uniqueId = Date.now();
+      const regexTestNote = {
+        title: `Regex Test Note ${uniqueId}`,
+        body: `Content with unique marker RXTEST_${uniqueId} for regex testing`
+      };
+
+      await notesModule.createNote(
+        regexTestNote.title,
+        regexTestNote.body,
+        TEST_DATA.NOTES.folderName
+      );
+
+      await sleep(2000);
+
+      // Search using a regex pattern — contains metacharacters so tier 2 fires
+      const foundNotes = await notesModule.findNote(`RXTEST_${uniqueId}`);
+      expect(Array.isArray(foundNotes)).toBe(true);
+
+      // Search using an actual regex pattern across name + content
+      const regexFoundNotes = await notesModule.findNote(`Regex.*${uniqueId}`);
+      expect(Array.isArray(regexFoundNotes)).toBe(true);
+      const match = regexFoundNotes.find(note => note.name.includes(`${uniqueId}`));
+      expect(match).toBeTruthy();
+      console.log(`✅ Found note via regex pattern: "${match?.name}"`);
+    }, 20000);
+
+    it("should find notes via bigram similarity for typos (tier 3)", async () => {
+      // "Seach Test" is a deliberate typo of "Search Test" — won't match via substring,
+      // but bigram similarity should surface notes with "Search Test" in the title
+      const foundNotes = await notesModule.findNote("Seach Test");
+      expect(Array.isArray(foundNotes)).toBe(true);
+
+      if (foundNotes.length > 0) {
+        const match = foundNotes.find(note => note.name.toLowerCase().includes("search"));
+        expect(match).toBeTruthy();
+        console.log(`✅ Bigram search found "${match?.name}" for typo "Seach Test"`);
+      } else {
+        console.log("ℹ️ No notes found via bigram — no 'Search Test' notes may exist yet");
+      }
+    }, 15000);
+
+    it("should search case-insensitively", async () => {
+      const lower = await notesModule.findNote("search test");
+      const upper = await notesModule.findNote("SEARCH TEST");
+      expect(lower.length).toBe(upper.length);
+      console.log(`✅ Case-insensitive: both queries returned ${lower.length} results`);
+    }, 15000);
+  });
+
+  describe("getNoteByTitle", () => {
+    it("should return full content for an existing note", async () => {
+      // Create a note with known long content that would be truncated in getAllNotes
+      const uniqueId = Date.now();
+      const longBody = `Full content test. ${"This is a long sentence that fills up the preview. ".repeat(10)}Unique marker: FULLCONTENT_${uniqueId}`;
+      const title = `Full Content Test ${uniqueId}`;
+
+      await notesModule.createNote(title, longBody, TEST_DATA.NOTES.folderName);
+      await sleep(2000);
+
+      const note = await notesModule.getNoteByTitle(title);
+      expect(note).not.toBeNull();
+      expect(note?.name).toBe(title);
+      // Full content should contain the unique marker beyond the 200-char preview
+      expect(note?.content).toContain(`FULLCONTENT_${uniqueId}`);
+      console.log(`✅ getNoteByTitle returned full content (${note?.content.length} chars)`);
+    }, 20000);
+
+    it("should return null for a non-existent note title", async () => {
+      const note = await notesModule.getNoteByTitle("ThisNoteDefinitelyDoesNotExist_99999");
+      expect(note).toBeNull();
+      console.log("✅ getNoteByTitle correctly returned null for missing note");
+    }, 10000);
+
+    it("should handle special characters in title", async () => {
+      const uniqueId = Date.now();
+      const title = `Special "Chars" Test ${uniqueId}`;
+      const body = "Testing special character handling in title";
+
+      await notesModule.createNote(title, body, TEST_DATA.NOTES.folderName);
+      await sleep(2000);
+
+      const note = await notesModule.getNoteByTitle(title);
+      expect(note).not.toBeNull();
+      expect(note?.name).toBe(title);
+      console.log(`✅ getNoteByTitle handled special characters in title: "${note?.name}"`);
+    }, 20000);
   });
 
   describe("getRecentNotesFromFolder", () => {
